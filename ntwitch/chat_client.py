@@ -55,10 +55,12 @@ class TwitchIRCClient:
     MAX_BACKOFF_SECONDS = 60  # Max wait time between reconnects
     
     def __init__(self, channels: List[str], message_callback: Callable[[ChatMessage], None],
-                 token: Optional[str] = None, username: Optional[str] = None):
-        """Initialize IRC client."""
+                 token: Optional[str] = None, username: Optional[str] = None,
+                 status_callback: Optional[Callable[[str, str], None]] = None):
+        """Initialize IRC client. status_callback(message, severity) reports connection problems."""
         self.channels = [c.lstrip('#').lower() for c in channels]
         self.message_callback = message_callback
+        self.status_callback = status_callback
         self.token = token
         self.username = username.lower() if username else None
         self.is_authenticated = bool(token and username)
@@ -71,6 +73,14 @@ class TwitchIRCClient:
         self._max_reconnect_attempts = self.MAX_RECONNECT_ATTEMPTS
         self._should_reconnect = True  # Allow disabling reconnect
     
+    def _status(self, message: str, severity: str = "information"):
+        """Tell the UI about a connection-level event."""
+        if self.status_callback:
+            try:
+                self.status_callback(message, severity)
+            except Exception:
+                pass
+
     async def connect(self):
         """Connect to Twitch IRC."""
         try:
@@ -217,7 +227,10 @@ class TwitchIRCClient:
         """Attempt to reconnect to IRC."""
         if self._reconnect_attempts >= self._max_reconnect_attempts:
             logger.error(f"Max reconnection attempts ({self._max_reconnect_attempts}) reached")
+            self._status("Chat disconnected. Restart nTwitch to reconnect (video is unaffected).", "error")
             return
+        if self._reconnect_attempts == 0:
+            self._status("Chat connection lost - reconnecting...", "warning")
         
         self._reconnect_attempts += 1
         wait_time = min(2 ** self._reconnect_attempts, 30)  # Exponential backoff, max 30s
@@ -238,6 +251,7 @@ class TwitchIRCClient:
             await self.connect()
             self._reconnect_attempts = 0  # Reset on successful connection
             logger.info("Reconnection successful!")
+            self._status("Chat reconnected", "information")
             
         except Exception as e:
             logger.error(f"Reconnection failed: {e}")
@@ -257,6 +271,17 @@ class TwitchIRCClient:
                             key, value = tag.split('=', 1)
                             tags[key] = value
             
+            # Login problems come as "NOTICE * :..." with no channel
+            lowered = raw_message.lower()
+            if 'notice *' in lowered and ('authentication failed' in lowered
+                                          or 'improperly formatted auth' in lowered
+                                          or 'login unsuccessful' in lowered):
+                self._should_reconnect = False
+                self._running = False
+                self._status("Chat login failed - your token is invalid or expired. "
+                             "Run nTwitch --setup to log in again.", "error")
+                return
+
             # Extract channel from NOTICE
             channel_match = re.search(r'NOTICE #(\w+)', raw_message)
             if not channel_match:
@@ -428,10 +453,12 @@ class ChatManager:
     """Manages chat connections and message routing."""
     
     def __init__(self, channels: List[str], message_callback: Callable[[ChatMessage], None],
-                 token: Optional[str] = None, username: Optional[str] = None):
+                 token: Optional[str] = None, username: Optional[str] = None,
+                 status_callback: Optional[Callable[[str, str], None]] = None):
         """Initialize chat manager."""
         self.channels = channels
         self.message_callback = message_callback
+        self.status_callback = status_callback
         self.token = token
         self.username = username
         self.client: Optional[TwitchIRCClient] = None
@@ -443,7 +470,8 @@ class ChatManager:
             channels=self.channels,
             message_callback=self.message_callback,
             token=self.token,
-            username=self.username
+            username=self.username,
+            status_callback=self.status_callback
         )
         await self.client.connect()
     
@@ -456,3 +484,38 @@ class ChatManager:
         """Disconnect from chat."""
         if self.client:
             await self.client.close_connection()
+
+
+async def verify_login(token: str, username: str, timeout: float = 8.0):
+    """Check a token/username pair against Twitch. Returns (ok, message)."""
+    writer = None
+    try:
+        reader, writer = await asyncio.wait_for(
+            asyncio.open_connection('irc.chat.twitch.tv', 6667), timeout=timeout
+        )
+        writer.write(f"PASS {token}\r\nNICK {username.lower()}\r\n".encode())
+        await writer.drain()
+
+        async def wait_for_verdict():
+            while True:
+                line = await reader.readline()
+                if not line:
+                    return False, "Twitch closed the connection."
+                text = line.decode('utf-8', errors='ignore')
+                low = text.lower()
+                if ' 001 ' in text:
+                    return True, "Logged in."
+                if 'authentication failed' in low or 'improperly formatted auth' in low:
+                    return False, "Twitch rejected that token (or it does not belong to that username)."
+
+        return await asyncio.wait_for(wait_for_verdict(), timeout=timeout)
+    except asyncio.TimeoutError:
+        return False, "Timed out talking to Twitch."
+    except OSError:
+        return False, "Could not reach Twitch - check your internet connection."
+    finally:
+        if writer:
+            try:
+                writer.close()
+            except Exception:
+                pass

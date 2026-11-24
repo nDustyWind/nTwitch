@@ -1,237 +1,121 @@
-# Twitch Terminal Viewer
+# nTwitch
 
-A terminal-based Twitch viewer that streams video via VLC and displays chat in a split-pane interface.
+Watch Twitch in VLC with live chat in your terminal. Up to 4 channels at once, ad-free via Streamlink.
 
-## Features
+## Start
 
-- Multi-channel video streaming (up to 4 channels simultaneously)
-- Split-pane terminal UI showing all channel chats
-- Channel recording with built-in timer
-- Press F1 to switch active channel
-- Chat restriction detection (bans, timeouts, follower-only mode, etc.)
-- Color-coded users (Streamers, Mods, Subs, VIPs)
-- Ad-free streaming via Streamlink
-- Anonymous mode for read-only chat
+**Windows:** double-click `nTwitch.bat`  
+**macOS / Linux:** run `sh nTwitch.sh`
 
-## Requirements
+That's it. On the first run nTwitch sets itself up: it creates a private Python environment, installs its Python packages, and installs anything missing (VLC, Streamlink, ffmpeg) for you. It then asks one optional question (whether to log in to chat) and shows the channel picker. Later launches start in about a second.
 
-- Python 3.8+
-- VLC Media Player
-- Streamlink (installed via pip)
-
-## Installation
+Prefer a normal install? With Python 3.9+:
 
 ```bash
-# Install dependencies
-pip install -r requirements.txt
-
-# Run setup wizard
-python twitch_viewer.py --setup
+pip install .          # adds an `nTwitch` command to your PATH
+nTwitch
 ```
 
-The setup wizard will configure VLC path, check Streamlink, and optionally set up Twitch authentication.
+or run it in place with `python nTwitch.py` / `python -m ntwitch`.
 
-## Quick Start
+> Installing VLC or ffmpeg through winget may show a Windows permission (UAC) prompt. Accept it once.
+> On Linux the installer uses `sudo` with your package manager and will ask for your password.
+
+## Using it
+
+Type one or more channels (commas or spaces, or paste a `twitch.tv` link). nTwitch checks which are live, opens a VLC window for each, and shows their chats side by side. The channels you watched last are pre-filled next time.
+
+**Favourites:** press `F2` in the picker to star the channels you typed. Starred channels are listed under the box with a green `● live` mark for those streaming right now. Press `Tab` to move to the list, `Space` to tick a channel, `Enter` to watch.
+
+| Key | Action |
+|---|---|
+| `F1` / `Tab` | Switch the active channel (the one with the lavender border) |
+| `F2` | Start / stop recording the active channel |
+| `F3` | Save a clip of the active channel (the first press starts its buffer) |
+| `F4` | Switch to different channels |
+| `F5` | Settings: video quality, folders, chat login |
+| `Ctrl+L` | Clear the active chat |
+| `Ctrl+Q` or `Ctrl+C` | Quit and close everything |
+
+Chat markers: `★` streamer, `◆` moderator, `♦` VIP. Messages that mention you are highlighted.
+
+## Sending messages
+
+Chat is read-only until you log in. Press `F5`, run `nTwitch --setup`, or answer yes during first-run setup. nTwitch opens the token page, checks the token with Twitch, and stores it in your **system credential store** (Windows Credential Manager, macOS Keychain, Secret Service on Linux). If your system has none, the token falls back to your config file in plain text and nTwitch tells you so. Tokens from older versions are moved to the credential store automatically.
+
+## Options
 
 ```bash
-python twitch_viewer.py
+nTwitch xqc shroud                  # skip the picker
+nTwitch --channels xqc --quality 720p60
+nTwitch xqc --no-chat               # video only
+nTwitch xqc --anon                  # read-only chat even if logged in
+nTwitch --simple-ui xqc             # plain scrolling chat, no panes
+nTwitch --setup                     # chat login, save folders
+nTwitch --debug                     # write diagnostics to ~/.twitch-terminal.log
 ```
 
-Enter channel names when prompted (comma-separated for multiple channels).
+(`nTwitch` means `nTwitch.bat` / `sh nTwitch.sh` / `python nTwitch.py`, or the installed command.)
 
-## Keyboard Controls
+Quality: `best` (default), `1080p60`, `720p60` (good for 3+ streams), `720p`, `480p`, `360p`. Each stream at `best` uses about 6-8 Mbps. Change it any time in `F5` settings; saving restarts the video windows so it takes effect.
 
-- F1 - Switch/cycle active channel
-- F2 - Toggle recording for active channel
-- F3 - Save 10-minute clip of active channel
-- F4 - Switch to different streamers
-- Enter - Send message to active channel
-- Ctrl+L - Clear active channel's chat
-- Ctrl+C - Exit application
+## Recordings and clips
 
-## Command-Line Options
+- **Recordings** go to `~/Videos/TwitchRecordings/<channel>/`. They are written as `.ts` while recording (safe if the app is killed) and converted to `.mp4` when you stop.
+- **Clips** go to `~/Videos/TwitchClips/<channel>/`. The first `F3` press starts a rolling buffer of the active channel; every later press saves everything buffered, up to the last 10 minutes (at least 10 seconds are needed). The buffer lives in short segment files that are deleted as they age out, so disk use stays bounded. Saved as `.mp4` (ffmpeg is installed for you; without it you get `.ts`).
 
-```bash
-# Specify channels directly
-python twitch_viewer.py --channels xqc,hasanabi
+Folders can be changed in `F5` settings or with `nTwitch --setup`.
 
-# Set video quality
-python twitch_viewer.py --channels xqc --quality 720p60
+## Troubleshooting
 
-# Video only (no chat)
-python twitch_viewer.py --channels xqc --no-chat
+| Problem | What to do |
+|---|---|
+| "Offline, or the channel doesn't exist" | Twitch gives the same answer for both. Check the spelling, or try later. |
+| A tool could not be installed | nTwitch prints the one-line command to install it yourself, then start it again. |
+| Chat says login failed | Your token expired. Press `F5` (or run `nTwitch --setup`) and log in again. |
+| A video window closed | nTwitch doesn't reopen windows you close. Restart it (or press `F4`) to bring it back. |
+| Anything else | Run with `--debug` and check `~/.twitch-terminal.log`. |
 
-# Anonymous mode (read-only)
-python twitch_viewer.py --channels xqc --anon
-
-# Re-run setup
-python twitch_viewer.py --setup
-```
-
-## Stream Quality Options
-
-- `best` - Highest available (default, 6-8 Mbps per stream)
-- `1080p60` - 1080p 60fps
-- `720p60` - 720p 60fps (recommended for 3+ streams)
-- `720p` - 720p 30fps
-- `480p` - 480p
-- `360p` - 360p
-
-## Recording Streams
-
-1. Press F1 to select the channel you want to record
-2. Press F2 to start recording
-3. Press F2 again to stop recording
-4. Recordings saved to: `~/Videos/TwitchRecordings/CHANNEL/`
-
-Recording status is shown in the channel header: `[REC 00:05]`
-
-## Clipping
-
-1. Press F1 to select the channel
-2. Press F3 to save a 10-minute clip
-3. Clips saved to: `~/Videos/TwitchClips/`
-
-The app maintains a 10-minute rolling buffer for each active channel.
-
-## Terminal UI Layout
-
-```
-┌─────────────────┬─────────────────┬─────────────────┐
-│ >>> XQC <<<     │  >>> HASAN <<<  │  >>> POKI <<<   │
-├─────────────────┼─────────────────┼─────────────────┤
-│ [XQC] msg...    │ [HAS] msg...    │ [POKI] msg...   │
-│                 │                 │                 │
-└─────────────────┴─────────────────┴─────────────────┘
-Selected: #XQC | Recording XQC 1:32
-> Type message for #xqc...
-[F1] Next Channel [F2] Record [F3] Clip [F4] Switch [Ctrl+L] Clear [Ctrl+C] Exit
-```
-
-Minimum terminal size: 120 columns x 20 rows
+Use a modern terminal for the best look (Windows Terminal, iTerm2, any recent Linux terminal). A window at least 120 columns wide fits 4 channels comfortably. Set `NO_COLOR=1` for a monochrome UI.
 
 ## Configuration
 
-Configuration stored at: `~/.twitch-terminal-config.json`
+`~/.twitch-terminal-config.json`, normally managed from `F5` settings or `nTwitch --setup`:
 
 ```json
 {
   "vlc_path": "C:/Program Files/VideoLAN/VLC/vlc.exe",
-  "twitch_username": "your_username",
-  "twitch_oauth": "oauth:your_token_here",
+  "twitch_username": "",
+  "twitch_oauth": "",
   "streamlink_quality": "best",
-  "chat_colors_enabled": true,
-  "recording_path": "C:/Users/You/Videos/TwitchRecordings"
+  "recording_path": "C:/Users/You/Videos/TwitchRecordings",
+  "clips_path": "C:/Users/You/Videos/TwitchClips",
+  "last_channels": "xqc, shroud",
+  "favorites": ["xqc", "shroud"]
 }
 ```
 
-## Getting OAuth Token
+`twitch_oauth` stays empty when the token is in the credential store.
 
-1. Visit: https://twitchtokengenerator.com/
-2. Select "Bot Chat Token" or "Custom Scopes"
-3. Authorize the application
-4. Copy the "Access Token"
-5. Paste during setup (setup will add `oauth:` prefix automatically)
-
-## Chat Restrictions
-
-The app automatically detects and displays chat restrictions:
-
-- Permanent bans
-- Account suspensions
-- Timeouts
-- Followers-only mode
-- Subscribers-only mode
-- Slow mode
-- Emote-only mode
-- Rate limiting
-- Duplicate message blocking
-
-Restriction messages appear in red in the chat window.
-
-## Troubleshooting
-
-### Streamlink Not Found
-```bash
-pip install streamlink
-```
-
-### VLC Not Found
-Run setup and specify VLC path manually:
-```bash
-python twitch_viewer.py --setup
-```
-
-### Streams Failing to Launch
-- Check if channel is live
-- Verify internet connection
-- Test manually: `streamlink twitch.tv/CHANNEL best`
-
-### Terminal Too Small
-Resize to at least 120x20 or reduce number of channels.
-
-### Multiple Streams Stopping
-Reduce quality to lower bandwidth usage:
-```bash
-python twitch_viewer.py --channels xqc,hasan,poki --quality 720p60
-```
-
-Bandwidth requirements:
-- 1 stream at best: 6-8 Mbps
-- 3 streams at best: 18-24 Mbps
-- 3 streams at 720p60: 12-15 Mbps
-
-## Building Executable
-
-### Windows
+## Development
 
 ```bash
-build.bat
+pip install -e ".[dev]"
+python -m pytest                    # no network needed
+python build_scripts/build.py       # standalone dist/nTwitch.exe via PyInstaller
 ```
 
-Creates `dist/TwitchViewer.exe` (15-20 MB)
+Code lives in the `ntwitch/` package (`cli.py` is the entry point). Tests run on Linux and Windows in GitHub Actions.
 
-Note: VLC and Streamlink must still be installed on target system.
+## Known limitations
 
-## Platform Support
-
-- Windows: Fully supported (Windows Terminal or PowerShell recommended)
-- macOS: Fully supported (iTerm2 or Terminal.app)
-- Linux: Fully supported (any modern terminal)
-
-## Performance
-
-- Memory: 50-100 MB per channel
-- CPU: Minimal (VLC handles decoding)
-- Network: Varies by quality
-- Recommended max: 3-5 channels
-
-## Known Limitations
-
-- Max 4 visible channel panes
-- Text-only chat (Twitch emotes won't display as images)
-- Live streams only (no VODs)
-- Twitch rate limiting: 20 messages per 30 seconds
-
-## Logs
-
-Application logs: `twitch_viewer.log`
-
-View live:
-```bash
-tail -f twitch_viewer.log
-```
+- Text-only chat (no emote images); live streams only (no VODs)
+- Max 4 channels (panes); Twitch limits chat to 20 messages per 30 seconds
+- Chat login uses a token from a third-party generator, since Twitch requires every app to register its own client ID
+- Twitch's own stream/chat endpoints can change; update Streamlink if streams stop opening (`pip install -U streamlink` inside `.venv`)
 
 ## Credits
 
-- Streamlink: https://streamlink.github.io/
-- Textual: https://textual.textualize.io/
-- VLC Media Player: https://www.videolan.org/
+[Streamlink](https://streamlink.github.io/) · [Textual](https://textual.textualize.io/) · [Rich](https://github.com/Textualize/rich) · [VLC](https://www.videolan.org/)
 
-## License
-
-MIT License
-
-## Disclaimer
-
-This application is not affiliated with Twitch Interactive, Inc. Use at your own risk and respect Twitch's Terms of Service.
+MIT License. Not affiliated with Twitch Interactive, Inc.; respect Twitch's Terms of Service.

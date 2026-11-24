@@ -1,11 +1,13 @@
 """Recording manager for capturing Twitch streams."""
 import subprocess
-import os
+import threading
 import logging
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, Optional
 from dataclasses import dataclass
+
+from . import tools
 
 
 logger = logging.getLogger(__name__)
@@ -59,25 +61,20 @@ class RecordingManager:
             
             # Generate filename with timestamp
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"{channel}_{timestamp}.mp4"
+            filename = f"{channel}_{timestamp}.ts"  # remuxed to mp4 when you stop
             output_file = channel_folder / filename
             
             # Build streamlink command for recording
-            cmd = [
-                "streamlink",
+            cmd = tools.streamlink_cmd() + [
                 "--force",  # Overwrite if file exists
+                "--loglevel=none",
                 f"twitch.tv/{channel}",
                 self.quality,
                 "-o", str(output_file)
             ]
             
-            # Start recording process
-            process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                stdin=subprocess.DEVNULL
-            )
+            # Start recording process (output discarded: an undrained pipe would stall streamlink)
+            process = subprocess.Popen(cmd, **tools.popen_kwargs())
             
             # Store recording info
             self.recordings[channel] = Recording(
@@ -103,13 +100,7 @@ class RecordingManager:
         try:
             recording = self.recordings[channel]
             
-            # Terminate the recording process gracefully
-            recording.process.terminate()
-            
-            try:
-                recording.process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                recording.process.kill()
+            tools.kill_tree(recording.process, timeout=5)
             
             # Remove from active recordings
             del self.recordings[channel]
@@ -119,14 +110,35 @@ class RecordingManager:
             minutes = int(duration.total_seconds() / 60)
             
             logger.info(f"Stopped recording {channel} after {minutes} minutes")
-            logger.info(f"Saved to: {recording.output_file}")
-            
-            return recording.output_file
+            return self._finalize(recording.output_file)
             
         except Exception as e:
             logger.error(f"Error stopping recording for {channel}: {e}")
             return None
     
+    def _finalize(self, ts_file: Path) -> Path:
+        """Convert the raw stream to mp4 in the background (needs ffmpeg). Returns the path the user should look for."""
+        ffmpeg = tools.find_ffmpeg()
+        if not ffmpeg or not ts_file.exists():
+            return ts_file
+        mp4 = ts_file.with_suffix(".mp4")
+
+        def remux() -> None:
+            part = mp4.with_suffix(".mp4.part")
+            try:
+                result = subprocess.run([ffmpeg, "-y", "-i", str(ts_file), "-c", "copy", "-f", "mp4", str(part)],
+                                        **tools.popen_kwargs())
+                if result.returncode == 0 and part.exists():
+                    part.replace(mp4)
+                    ts_file.unlink(missing_ok=True)
+                else:
+                    part.unlink(missing_ok=True)  # keep the .ts, it is still playable
+            except Exception as e:
+                logger.error("remux failed: %s", e)
+
+        threading.Thread(target=remux, daemon=True).start()
+        return mp4
+
     def toggle_recording(self, channel: str) -> tuple[bool, str]:
         """
         Toggle recording for a channel.
